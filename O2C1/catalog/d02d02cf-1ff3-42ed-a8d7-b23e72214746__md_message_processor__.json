@@ -1,0 +1,11 @@
+{
+    "inputMessageMetadata": {},
+    "outputMessageMetadata": {
+        "messagePayload": {
+            "connectorName": "Salesforce__Basic_Authentication4",
+            "typeId": "Opportunity"
+        }
+    },
+    "id": "d02d02cf-1ff3-42ed-a8d7-b23e72214746",
+    "version": "5.2.0.0"
+}

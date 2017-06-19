@@ -1,0 +1,10 @@
+%dw 1.0
+%output application/java
+---
+[{
+	Account: {
+		Name: "????"
+	},
+	Id: "????",
+	Product_Name__c: "????"
+}]

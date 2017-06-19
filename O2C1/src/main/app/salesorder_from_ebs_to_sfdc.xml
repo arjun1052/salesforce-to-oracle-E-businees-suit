@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:sfdc="http://www.mulesoft.org/schema/mule/sfdc"
+	xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/sfdc http://www.mulesoft.org/schema/mule/sfdc/current/mule-sfdc.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd">
+    <flow name="salesorder_from_ebs_to_sfdcFlow">
+    <http:listener config-ref="HTTP_Listener_Configuration" path="/order" doc:name="HTTP"/>
+        <db:select config-ref="Oracle_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[select * from(SELECT ooh.order_number,
+       hp_bill.party_name   
+FROM   oe_order_headers_all ooh
+     , hz_cust_site_uses_all hcs_ship
+     , hz_cust_acct_sites_all hca_ship
+     , hz_party_sites hps_ship
+     , hz_parties hp_ship
+     , hz_locations hl_ship
+     , hz_cust_site_uses_all hcs_bill
+     , hz_cust_acct_sites_all hca_bill
+     , hz_party_sites hps_bill
+     , hz_parties hp_bill
+     , hz_locations hl_bill
+     , mtl_parameters mp
+WHERE  1 = 1
+AND    hp_ship.party_name='Reliance'
+AND    ooh.ship_to_org_id = hcs_ship.site_use_id
+AND    hcs_ship.cust_acct_site_id = hca_ship.cust_acct_site_id
+AND    hca_ship.party_site_id = hps_ship.party_site_id
+AND    hps_ship.party_id = hp_ship.party_id
+AND    hps_ship.location_id = hl_ship.location_id
+AND    ooh.invoice_to_org_id = hcs_bill.site_use_id
+AND    hcs_bill.cust_acct_site_id = hca_bill.cust_acct_site_id
+AND    hca_bill.party_site_id = hps_bill.party_site_id
+AND    hps_bill.party_id = hp_bill.party_id
+AND    hps_bill.location_id = hl_bill.location_id
+AND    mp.organization_id(+) = ooh.ship_from_org_id
+order by ooh.creation_date desc)q
+where rownum=1]]></db:parameterized-query>
+        </db:select>
+        <dw:transform-message doc:name="Transform Message">
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+{
+	"partyName":payload.PARTY_NAME[0]
+}]]></dw:set-payload>
+            <dw:set-session-variable variableName="order"><![CDATA[%dw 1.0
+%output application/java
+---
+{
+	"orderNumber":payload.ORDER_NUMBER[0]
+}]]></dw:set-session-variable>
+        </dw:transform-message>
+        <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+        <sfdc:query-single config-ref="Salesforce__Basic_Authentication" query="dsql:SELECT Id,Account.Name,Name,CloseDate,StageName FROM Opportunity WHERE ( Account.Name = '#[payload.partyName]')" doc:name="Salesforce"/>
+        <logger level="INFO" doc:name="Logger"/>
+        <dw:transform-message doc:name="Transform Message">
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+[{
+	Id: payload.Id,
+	Name: payload.Name,
+	StageName: payload.StageName,
+	CloseDate: payload.CloseDate as :date,
+	OrderNumber__c: sessionVars.order.orderNumber as :string
+}]]]></dw:set-payload>
+        </dw:transform-message>
+        <sfdc:upsert config-ref="Salesforce__Basic_Authentication" externalIdFieldName="Id" type="Opportunity" doc:name="Salesforce">
+            <sfdc:objects>
+                <sfdc:object>
+                    <sfdc:inner-object key="CloseDate">#[payload[0].CloseDate]</sfdc:inner-object>
+                    <sfdc:inner-object key="Name">#[payload[0].Name]</sfdc:inner-object>
+                    <sfdc:inner-object key="Id">#[payload[0].Id]</sfdc:inner-object>
+                    <sfdc:inner-object key="OrderNumber__c">#[payload[0].OrderNumber__c]</sfdc:inner-object>
+                </sfdc:object>
+            </sfdc:objects>
+        </sfdc:upsert>
+        <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+        <catch-exception-strategy doc:name="Exception Handling ">
+            <logger level="INFO" doc:name="StartLog"/>
+            <set-payload value="{ &quot;errorMessage&quot; : &quot;#[exception.message]&quot;, &quot;exception&quot;:&quot;#[exception.getDetailedMessage()]&quot; }" mimeType="text/html" doc:name="CatchException"/>
+            <set-property propertyName="http.status" value="400" doc:name="http.status"/>
+            <logger level="INFO" doc:name="EndLog"/>
+        </catch-exception-strategy>
+    </flow>
+</mule>
